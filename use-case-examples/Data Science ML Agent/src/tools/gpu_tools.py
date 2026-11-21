@@ -5,6 +5,7 @@ from typing import Tuple, Dict, Any
 
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.model_selection import train_test_split, StratifiedKFold, KFold, cross_val_score
 from sklearn.metrics import accuracy_score, f1_score, mean_squared_error, mean_absolute_error, r2_score
 from sklearn.linear_model import LogisticRegression, Ridge
@@ -596,7 +597,7 @@ def predict(model_path: str, test_data_path: str, output_path: str = "prediction
     
     return summary
 
-class Float32Transformer:
+class Float32Transformer(TransformerMixin, BaseEstimator):
     """Picklable transformer to convert arrays to float32 for memory efficiency."""
     
     def __init__(self, accept_sparse=False):
@@ -604,6 +605,9 @@ class Float32Transformer:
     
     def fit(self, X, y=None):
         return self
+
+    def __sklearn_is_fitted__(self):
+        return True
     
     def transform(self, X):
         # Convert sparse to dense if needed

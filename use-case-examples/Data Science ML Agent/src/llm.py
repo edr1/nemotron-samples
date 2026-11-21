@@ -5,12 +5,6 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# Configuration
-BASE_URL = os.getenv("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
-MODEL = os.getenv("NIM_MODEL", "nvidia/nvidia-nemotron-nano-9b-v2")
-TEMPERATURE = float(os.getenv("NIM_TEMPERATURE", "0"))
-MAX_TOKENS = int(os.getenv("NIM_MAX_TOKENS", "4096"))
-
 # Set up HTTP session with retries
 def create_session():
     """Create a session with retry logic for better reliability."""
@@ -33,54 +27,41 @@ class LLMClient:
     """Simple client to talk to AI models."""
     
     def __init__(self):
-        # Get API key from environment
-        self.api_key = os.getenv("NVIDIA_API_KEY")
-        if not self.api_key:
-            raise ValueError("Please set NVIDIA_API_KEY environment variable")
-        
-        self.base_url = BASE_URL.rstrip("/")
-        self.model = MODEL
-        self.temperature = TEMPERATURE
-        self.max_tokens = MAX_TOKENS
+        self.ollama_url = os.getenv("OLLAMA_BASE_URL", "").strip().rstrip("/")
+        self.model = os.getenv("OLLAMA_MODEL", "nemotron-3.5-lightning:30b-a3b")
+        self.temperature = float(os.getenv("OLLAMA_TEMPERATURE", "0.6"))
+        self.max_tokens = int(os.getenv("OLLAMA_MAX_TOKENS", "4096"))
         self.session = create_session()
- 
+
     def chat(self, messages: List[dict], tools: Optional[List[dict]] = None) -> dict:
-        """Send messages to the AI and get a response."""
-        
-        # Prepare the request
-        request_data = {
+        """Send messages to Ollama and return its assistant message."""
+        if not self.ollama_url:
+            raise ValueError("Set OLLAMA_BASE_URL and restart Streamlit to use Ollama chat.")
+
+        endpoint = f"{self.ollama_url}/api/chat"
+        payload = {
             "model": self.model,
             "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "stream": False,
+            "think": False,
+            "options": {"temperature": self.temperature, "num_predict": self.max_tokens},
         }
-        
-        # Add tools if provided
         if tools:
-            request_data["tools"] = tools
-            request_data["tool_choice"] = "auto"
-        
-        # Set up headers
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        
+            payload["tools"] = tools
+
         try:
-            # Make the request
-            response = self.session.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
-                json=request_data,
-                timeout=(10, 300)  # 10 seconds to connect, 300 seconds to read
-            )
-            
-            # Check if request was successful
-            response.raise_for_status()
-            return response.json()
-            
+            response = self.session.post(endpoint, json=payload, timeout=(10, 300))
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to communicate with AI: {e}")
+            raise RuntimeError(f"Could not reach Ollama at {endpoint}: {e}") from e
+
+        if not response.ok:
+            try:
+                detail = response.json().get("error") or response.reason
+            except ValueError:
+                detail = response.reason
+            raise RuntimeError(f"Ollama returned HTTP {response.status_code} for {self.model}: {detail}")
+
+        return response.json()["message"]
 
 def create_client() -> LLMClient:
     """Create a new LLM client."""

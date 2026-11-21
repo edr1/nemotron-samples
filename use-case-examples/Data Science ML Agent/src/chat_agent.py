@@ -1,5 +1,6 @@
 # chat_agent.py - Final simplified version for beginners
 import json
+import re
 import sys
 import types
 from pathlib import Path
@@ -214,7 +215,7 @@ class ChatAgent:
             Begin your response directly with **Dataset Overview** and the content. No title before that."""
 
         try:
-            response = self.llm_client.chat([
+            message = self.llm_client.chat([
                 {"role": "system", "content": "You are a data analyst. Create clear, well-formatted dataset descriptions using markdown. Be concise but informative. Use proper markdown formatting with headers (##), bullet points (-), and code blocks (```)."},
                 {"role": "user", "content": prompt}
             ])
@@ -1079,16 +1080,46 @@ class ChatAgent:
                 {"role": "user", "content": paraphrase_prompt}
             ])
             
-            paraphrased = response["choices"][0]["message"]["content"].strip()
+            paraphrased = (message.get("content") or "").strip()
             # Remove quotes if the LLM wrapped it in quotes
             paraphrased = paraphrased.strip('"\'')
-            return paraphrased
+            return paraphrased or user_message
         except Exception:
             # If paraphrasing fails, return original
             return user_message
     
-    def chat(self, user_message: str) -> str:
-        """Main chat method - simplified single pass."""
+    def _run_local_command(self, user_message: str) -> tuple[str, str] | None:
+        command = user_message.strip()
+        load_match = re.fullmatch(
+            r"load (.+?\.(?:csv|parquet))(?: with (.+?) as the target)?",
+            command,
+            flags=re.IGNORECASE,
+        )
+        if load_match:
+            path, target = load_match.groups()
+            return command, self._call_tool("load_dataset", {"path": path, "target": target})
+
+        training_match = re.fullmatch(
+            r"train (classification|regression) models?", command, flags=re.IGNORECASE
+        )
+        if training_match:
+            return command, self._call_tool(f"train_{training_match[1].lower()}", {})
+
+        prediction_match = re.fullmatch(
+            r"make predictions for (.+?\.(?:csv|parquet))", command, flags=re.IGNORECASE
+        )
+        if prediction_match:
+            return command, self._call_tool("predict", {"test_data_path": prediction_match[1]})
+
+        return None
+
+    def chat(self, user_message: str) -> tuple[str, str]:
+        """Run local commands or let the configured model select a tool."""
+        if not self.llm_client.ollama_url:
+            local_result = self._run_local_command(user_message)
+            if local_result is not None:
+                return local_result
+
         # Paraphrase the question first
         paraphrased_question = self._paraphrase_question(user_message)
         
@@ -1101,23 +1132,21 @@ class ChatAgent:
         
         try:
             # Get response from LLM
-            response = self.llm_client.chat(
+            message = self.llm_client.chat(
                 messages=self.conversation,
                 tools=self._get_tool_specs()
             )
              
-            # Extract the message
-            message = response["choices"][0]["message"]
-            
             # Check if LLM wants to use a tool
             if message.get("tool_calls"):
                 tool_call = message["tool_calls"][0]
                 tool_name = tool_call["function"]["name"]
                 
-                try:
-                    arguments = json.loads(tool_call["function"]["arguments"])
-                except json.JSONDecodeError:
-                    arguments = {}
+                arguments = tool_call["function"]["arguments"]
+                if isinstance(arguments, str):
+                    arguments = json.loads(arguments)
+                if not isinstance(arguments, dict):
+                    raise ValueError(f"Invalid arguments for {tool_name}")
                 
                 # Call the tool
                 result = self._call_tool(tool_name, arguments)
@@ -1129,7 +1158,7 @@ class ChatAgent:
             
             # Regular text response
             else:
-                content = message.get("content", "I'm not sure how to help with that.")
+                content = message.get("content") or "I'm not sure how to help with that."
                 self.conversation.append({"role": "assistant", "content": content})
                 return paraphrased_question, content
                 

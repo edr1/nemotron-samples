@@ -1,0 +1,9 @@
+joblib
+numpy
+optuna
+pandas
+pyarrow
+requests
+scikit-learn
+streamlit>=1.49
+urllib3
