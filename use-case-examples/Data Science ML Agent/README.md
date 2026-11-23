@@ -56,9 +56,9 @@ From this example's directory in Linux:
 python3 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements.txt
 
-export OLLAMA_BASE_URL="http://10.8.0.32:11434"
-curl -s "\$OLLAMA_BASE_URL/api/tags" | jq -r '.models[].name'
-./.venv/bin/python -m streamlit run user_interface.py --server.address 127.0.0.1
+export OLLAMA_BASE_URL="http://127.0.0.1:11434"
+curl -fsS "${OLLAMA_BASE_URL}/api/tags" | jq -r '.models[].name'
+./.venv/bin/python -m streamlit run user_interface.py --server.address=10.8.0.32 --server.port=8501
 ```
 
 Open [http://127.0.0.1:8501](http://127.0.0.1:8501). Upload `train.csv` and enter `Load train.csv with Survived as the target`, then `Train classification models`. Upload `test.csv` and enter `Make predictions for test.csv` to try inference.
