@@ -58,6 +58,12 @@ python3 -m venv .venv
 
 export OLLAMA_BASE_URL="http://127.0.0.1:11434"
 curl -fsS "${OLLAMA_BASE_URL}/api/tags" | jq -r '.models[].name'
+./.venv/bin/python -m pip install --pre 
+  --extra-index-url https://pypi.nvidia.com \
+  --extra-index-url https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/ \
+  'cudf-cu13==26.12.*' 'cuml-cu13==26.12.*'
+./.venv/bin/python -m pip check
+./.venv/bin/python -c 'from src.ml_backend import GPU_ENABLED, ML_BACKEND; assert GPU_ENABLED, ML_BACKEND; import cudf; print(ML_BACKEND, cudf.Series([1, 2, 3]).sum())'  
 ./.venv/bin/python -m streamlit run user_interface.py --server.address=10.8.0.32 --server.port=8501
 ```
 
