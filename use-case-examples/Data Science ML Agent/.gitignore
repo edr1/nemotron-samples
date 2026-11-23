@@ -1,4 +1,4 @@
-data/
 .venv/
 .venv-gpu/
 __pycache__/
+response_*.txt

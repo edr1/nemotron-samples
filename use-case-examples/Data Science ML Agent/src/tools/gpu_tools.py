@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from typing import Tuple, Dict, Any
 
+from src.ml_backend import GPU_ENABLED
+
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -24,6 +26,9 @@ warnings.filterwarnings('ignore', message='This Pipeline instance is not fitted 
 
 def _try_free_memory():
     """Active GPU Memory Management"""
+    if not GPU_ENABLED:
+        return
+
     try:
         import cupy
         # Free all GPU memory pools

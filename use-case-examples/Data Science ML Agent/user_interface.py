@@ -1,3 +1,5 @@
+from src.ml_backend import ML_BACKEND
+
 import streamlit as st
 import pandas as pd
 import tempfile
@@ -71,6 +73,31 @@ if "messages" not in st.session_state:
 if "uploaded_files" not in st.session_state:
     st.session_state.uploaded_files = {}
 
+with st.sidebar:
+    st.caption(f"ML backend: {ML_BACKEND}")
+    with st.expander("Ollama settings"):
+        use_ollama = st.toggle(
+            "Use Ollama", value=bool(os.getenv("OLLAMA_BASE_URL", "").strip()), key="use_ollama"
+        )
+        ollama_url = st.text_input(
+            "Ollama server URL",
+            value=os.getenv("OLLAMA_BASE_URL") or "http://127.0.0.1:11434",
+            key="ollama_url",
+            disabled=not use_ollama,
+        ).strip().rstrip("/")
+        ollama_model = st.text_input(
+            "Ollama model",
+            value=os.getenv("OLLAMA_MODEL") or "nemotron-3.5-lightning:30b-a3b",
+            key="ollama_model",
+            disabled=not use_ollama,
+        ).strip()
+        if use_ollama and not (ollama_url and ollama_model):
+            st.warning("Enter the Ollama server URL and model to enable chat with the LLM.")
+
+    llm_client = st.session_state.ml_agent.llm_client
+    llm_client.ollama_url = ollama_url if use_ollama and ollama_model else ""
+    llm_client.model = ollama_model
+
 # Layout
 left_col, right_col = st.columns([3, 7])
 
@@ -142,6 +169,9 @@ with left_col:
     # Quick examples
     with st.expander("💡 Example Commands", expanded=False):
         st.markdown("""
+        With Ollama off, call any tool by name. Quote text arguments, as in
+        `load_dataset("train.csv", "Survived")`. Enter `help()` for the tool list.
+
         **Data Loading:**
         ```
         load_dataset(path, target)
@@ -198,13 +228,13 @@ with left_col:
 
         **Examples:**
         ```
-        "load dataset Titanic-Dataset.csv/Titanic-Dataset-test.csv"
+        "load dataset train.csv"
         "set target variable to be 'Survived'"
-        "train classification/regression model"
+        "train classification models"
         "optimize svc with 50 trials"
         "optimize forest regressor with 30 trials"
         "show best model by r2"
-        "make inference for the test dataset"
+        "make predictions for test.csv"
         ```
         """)
                     

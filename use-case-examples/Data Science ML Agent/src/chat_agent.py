@@ -1,40 +1,55 @@
 # chat_agent.py - Final simplified version for beginners
+import ast
+import inspect
 import json
 import re
-import sys
-import types
 from pathlib import Path
 from typing import Any, Dict, List
+
+# Import the tools first so their backend is configured before pandas.
+from src.tools import gpu_tools
 
 import pandas as pd
 from joblib import dump
 from pandas.api.types import is_numeric_dtype
 
 # Import our modules
-from src.tools import gpu_tools
 from src.tools.exp_store import ExperimentStore
 from src import llm
 
 
-def setup_fake_cupy():
-    """Create a fake cupy module if it's not installed."""
-    if "cupy" in sys.modules:
-        return
-    
-    try:
-        import cupy
-    except ImportError:
-        # Create a fake cupy module
-        fake_cupy = types.SimpleNamespace()
-        fake_cupy.get_default_memory_pool = lambda: types.SimpleNamespace(free_all_blocks=lambda: None)
-        sys.modules["cupy"] = fake_cupy
+LOCAL_COMMANDS = (
+    (r"""load\s+(?:dataset\s+)?(?P<path>.+?\.(?:csv|parquet)["']?)(?:\s+with\s+(?P<target>.+?)\s+as\s+the\s+target)?""", "load_dataset"),
+    (r"set target(?: variable)?(?: to(?: be)?)?\s+(?P<target>.+)", "set_target"),
+    (r"describe (?:the )?(?:data|dataset)", "describe_data"),
+    (r"preview (?:the )?data(?:set)?(?:\s+(?P<rows>\d+)(?: rows)?)?", "preview_data"),
+    (r"show (?:the )?first (?P<rows>\d+) rows", "preview_data"),
+    (r"train classification models?", "train_classification"),
+    (r"train regression models?", "train_regression"),
+    (r"show (?:the )?best model(?: by (?P<metric>\w+))?", "show_best_model"),
+    (r"show (?:experiment )?history(?:\s+(?P<limit>\d+))?", "show_history"),
+    (r"(?:make predictions|make inference|predict) for (?P<test_data_path>.+?\.(?:csv|parquet))", "predict"),
+    (r"help", "help"),
+)
+
+OPTIMIZATION_TOOLS = {
+    "logistic": "optimize_logistic",
+    "logistic regression": "optimize_logistic",
+    "svc": "optimize_svc",
+    "forest": "optimize_forest",
+    "random forest": "optimize_forest",
+    "ridge": "optimize_ridge",
+    "ridge regression": "optimize_ridge",
+    "forest regressor": "optimize_forest_regressor",
+    "random forest regressor": "optimize_forest_regressor",
+    "svr": "optimize_svr",
+}
+
 
 class ChatAgent:
     """A friendly chat agent for machine learning tasks."""
     
     def __init__(self):
-        setup_fake_cupy()
-        
         # Storage for experiments
         self.store = ExperimentStore()
         self.store.clear_all()  # Start fresh
@@ -775,8 +790,8 @@ class ChatAgent:
         """Show available commands."""
         return """Available commands:
         Data Loading:
-        • load_dataset(path, target) - Load CSV/Parquet file (target optional)
-        • set_target(column) - Set target column
+        • `load_dataset("train.csv", "Survived")` - Load CSV/Parquet file (target optional)
+        • `set_target("Survived")` - Set target column
         • describe_data() - Show dataset information
         • preview_data(rows?) - Show first few rows
 
@@ -802,13 +817,13 @@ class ChatAgent:
         • show_history(limit?) - Show recent experiments
 
         Examples:
-        "load dataset Titanic-Dataset.csv/Titanic-Dataset-test.csv"
+        "load dataset train.csv"
         "set target variable to be 'Survived'"
-        "train classification/regression model"
+        "train classification models"
         "optimize svc with 50 trials"
         "optimize forest regressor with 30 trials"
         "show best model by r2"
-        "make inference for the test dataset"
+        "make predictions for test.csv"
         """
     
     def _generate_custom_analysis(self, user_request: str) -> str:
@@ -1090,26 +1105,44 @@ class ChatAgent:
     
     def _run_local_command(self, user_message: str) -> tuple[str, str] | None:
         command = user_message.strip()
-        load_match = re.fullmatch(
-            r"load (.+?\.(?:csv|parquet))(?: with (.+?) as the target)?",
-            command,
-            flags=re.IGNORECASE,
-        )
-        if load_match:
-            path, target = load_match.groups()
-            return command, self._call_tool("load_dataset", {"path": path, "target": target})
+        if re.match(r"\w+\s*\(", command):
+            try:
+                call = ast.parse(command, mode="eval").body
+                if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+                    raise ValueError("Enter one tool call with literal arguments.")
 
-        training_match = re.fullmatch(
-            r"train (classification|regression) models?", command, flags=re.IGNORECASE
-        )
-        if training_match:
-            return command, self._call_tool(f"train_{training_match[1].lower()}", {})
+                tool_name = call.func.id.lower()
+                if tool_name not in self.tools:
+                    return command, f"Unknown tool: {tool_name}. Type `help()` for available tools."
+                if any(keyword.arg is None for keyword in call.keywords):
+                    raise ValueError("Pass arguments explicitly.")
 
-        prediction_match = re.fullmatch(
-            r"make predictions for (.+?\.(?:csv|parquet))", command, flags=re.IGNORECASE
-        )
-        if prediction_match:
-            return command, self._call_tool("predict", {"test_data_path": prediction_match[1]})
+                args = [ast.literal_eval(arg) for arg in call.args]
+                kwargs = {keyword.arg: ast.literal_eval(keyword.value) for keyword in call.keywords}
+                if len(kwargs) != len(call.keywords):
+                    raise ValueError("Pass each named argument only once.")
+                arguments = inspect.signature(self.tools[tool_name]).bind(*args, **kwargs).arguments
+            except (SyntaxError, TypeError, ValueError):
+                return command, 'Invalid tool call. Quote text arguments, for example `load_dataset("train.csv", "Survived")`. Type `help()` for signatures.'
+
+            return command, self._call_tool(tool_name, arguments)
+
+        optimization = re.fullmatch(r"optimize (.+?)(?: with (\d+) trials?)?", command, re.I)
+        if optimization:
+            tool_name = OPTIMIZATION_TOOLS.get(optimization[1].lower())
+            if tool_name:
+                arguments = {"trials": int(optimization[2])} if optimization[2] else {}
+                return command, self._call_tool(tool_name, arguments)
+
+        for pattern, tool_name in LOCAL_COMMANDS:
+            match = re.fullmatch(pattern, command, re.I)
+            if match:
+                arguments = {
+                    key: int(value) if key in {"rows", "limit"} else value.strip("\"'")
+                    for key, value in match.groupdict().items()
+                    if value is not None
+                }
+                return command, self._call_tool(tool_name, arguments)
 
         return None
 
@@ -1119,6 +1152,10 @@ class ChatAgent:
             local_result = self._run_local_command(user_message)
             if local_result is not None:
                 return local_result
+            return user_message, (
+                "Type `help()` for all available tools. For example, use "
+                "`load dataset train.csv` or `optimize_svc(50)`."
+            )
 
         # Paraphrase the question first
         paraphrased_question = self._paraphrase_question(user_message)

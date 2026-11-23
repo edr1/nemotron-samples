@@ -1,6 +1,8 @@
+from src.tools.gpu_tools import load_data
+
 import pandas as pd
 
-train = pd.read_csv('data/train.csv')
+train = load_data('data/train.csv')
 
 target_rows = 1_000_000
 repeats = -(-target_rows // len(train))  # Ceiling division
